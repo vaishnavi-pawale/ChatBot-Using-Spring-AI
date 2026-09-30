@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spring AI Chatbot</title>
+    <title>Spring AI RAG Chatbot</title>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -107,22 +107,52 @@
             display: inline-block;
         }
 
-        /* Document Toolbar */
-        .doc-toolbar {
+        /* Mode Selector Toolbar */
+        .mode-toolbar {
             background: #FAFCFE;
             padding: 12px 24px;
             border-bottom: 2px solid var(--border-color);
             display: flex;
             align-items: center;
             justify-content: space-between;
+            flex-wrap: wrap;
             gap: 12px;
         }
 
+        .mode-toggle-group {
+            display: flex;
+            background: var(--baby-blue-light);
+            padding: 4px;
+            border-radius: 16px;
+            border: 1.5px solid var(--border-color);
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #1A567D;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .mode-btn.active {
+            background: var(--baby-pink);
+            color: var(--user-bubble-text);
+            box-shadow: 0 2px 8px rgba(247, 178, 208, 0.4);
+        }
+
+        /* Upload Panel */
         .upload-panel {
             display: flex;
             align-items: center;
-            gap: 12px;
-            width: 100%;
+            gap: 10px;
         }
 
         .upload-label-btn {
@@ -151,9 +181,9 @@
         .doc-badge {
             background: var(--baby-blue);
             color: #0E3550;
-            padding: 6px 14px;
+            padding: 6px 12px;
             border-radius: 12px;
-            font-size: 0.82rem;
+            font-size: 0.8rem;
             font-weight: 600;
             display: none;
             align-items: center;
@@ -398,16 +428,25 @@
         <div class="header-info">
             <div class="bot-avatar">🤖</div>
             <div class="bot-details">
-                <h2>Spring AI Assistant</h2>
+                <h2>Spring AI Chat & RAG</h2>
                 <div class="status-badge">
-                    <span class="status-dot"></span> Online & Ready
+                    <span class="status-dot"></span> Online & Document Reader Ready
                 </div>
             </div>
         </div>
     </header>
 
-    <!-- Upload Bar -->
-    <div class="doc-toolbar">
+    <!-- Toolbar: Mode Selector & Upload Panel -->
+    <div class="mode-toolbar">
+        <div class="mode-toggle-group">
+            <button id="modeNormalBtn" class="mode-btn active" onclick="setMode('NORMAL')">
+                💬 Normal Chat
+            </button>
+            <button id="modeDocBtn" class="mode-btn" onclick="setMode('DOCUMENT')">
+                📚 Book / Document Chat
+            </button>
+        </div>
+
         <div class="upload-panel">
             <label for="fileInput" class="upload-label-btn">
                 📤 Upload Book / File
@@ -416,7 +455,7 @@
 
             <div id="docBadge" class="doc-badge">
                 <span id="docBadgeText">No docs</span>
-                <button class="clear-docs-btn" onclick="clearUploadedDocs()" title="Clear document">✕</button>
+                <button class="clear-docs-btn" onclick="clearUploadedDocs()" title="Clear documents">✕</button>
             </div>
         </div>
     </div>
@@ -424,7 +463,7 @@
     <!-- Suggestions -->
     <div class="suggestion-container">
         <button class="chip" onclick="sendSuggestion('Tell me a short programmer joke.')">😂 Programmer Joke</button>
-        <button class="chip" onclick="sendSuggestion('What is the main summary of the uploaded document?')">📖 Summarize Document</button>
+        <button class="chip" onclick="sendSuggestion('What is the main topic of the uploaded document?')">📖 Summarize Book</button>
         <button class="chip" onclick="sendSuggestion('Explain Spring AI ChatClient in simple terms.')">💡 Explain Spring AI</button>
     </div>
 
@@ -433,14 +472,14 @@
         <div class="message bot">
             <span class="message-sender">Assistant</span>
             <div class="message-bubble">
-                Hello! 👋 I am your Spring AI Assistant. You can ask me anything, or upload a local document (PDF, TXT, MD) to ask questions about your book!
+                Hello! 👋 You can chat with me in <strong>Normal Chat</strong> mode or upload your local documents (PDF, TXT, MD) and switch to <strong>Book / Document Chat</strong> mode to ask questions about your book!
             </div>
         </div>
     </div>
 
     <!-- Input Area -->
     <div class="chat-input-bar">
-        <input type="text" id="userInput" class="chat-input" placeholder="Type your message or ask about your uploaded document..." onkeypress="handleKeyPress(event)" />
+        <input type="text" id="userInput" class="chat-input" placeholder="Type your message here..." onkeypress="handleKeyPress(event)" />
         <button id="sendBtn" class="send-btn" onclick="sendMessage()">
             Send ➔
         </button>
@@ -448,15 +487,31 @@
 </div>
 
 <script>
+    let currentChatMode = 'NORMAL';
     const chatMessages = document.getElementById('chatMessages');
     const userInput = document.getElementById('userInput');
     const sendBtn = document.getElementById('sendBtn');
+    const modeNormalBtn = document.getElementById('modeNormalBtn');
+    const modeDocBtn = document.getElementById('modeDocBtn');
     const docBadge = document.getElementById('docBadge');
     const docBadgeText = document.getElementById('docBadgeText');
 
     window.addEventListener('DOMContentLoaded', () => {
         checkUploadedDocs();
     });
+
+    function setMode(mode) {
+        currentChatMode = mode;
+        if (mode === 'NORMAL') {
+            modeNormalBtn.classList.add('active');
+            modeDocBtn.classList.remove('active');
+            userInput.placeholder = "Type your message for Normal Chat...";
+        } else {
+            modeDocBtn.classList.add('active');
+            modeNormalBtn.classList.remove('active');
+            userInput.placeholder = "Ask a question about your uploaded book/document...";
+        }
+    }
 
     function handleKeyPress(event) {
         if (event.key === 'Enter') {
@@ -498,7 +553,7 @@
         const formData = new FormData();
         formData.append('file', file);
 
-        const notifyElem = showSystemNotification(`⏳ Processing document: "${file.name}"...`);
+        const typingElem = showSystemNotification(`⏳ Processing and indexing file: "${file.name}"...`);
 
         try {
             const res = await fetch('/api/documents/upload', {
@@ -507,16 +562,17 @@
             });
 
             const data = await res.json();
-            notifyElem.remove();
+            typingElem.remove();
 
             if (res.ok && data.success) {
                 updateDocBadge(data.documents);
-                appendMessage('bot', 'Assistant', `✅ <strong>Document Loaded!</strong> Indexed <code>${data.fileName}</code> into ${data.totalChunks} chunks. You can now ask questions about your book!`);
+                appendMessage('bot', 'Assistant', `✅ <strong>Document Loaded!</strong> Indexed <code>${data.fileName}</code> into ${data.totalChunks} semantic chunks. You can now switch to <strong>Book / Document Chat</strong> mode to ask questions about it!`);
+                setMode('DOCUMENT');
             } else {
                 appendMessage('bot', 'Assistant', `❌ Upload failed: ${data.error || 'Unknown error'}`);
             }
         } catch (err) {
-            notifyElem.remove();
+            typingElem.remove();
             appendMessage('bot', 'Assistant', `❌ Connection error while uploading document: ${err.message}`);
         }
         event.target.value = '';
@@ -527,7 +583,8 @@
             const res = await fetch('/api/documents', { method: 'DELETE' });
             if (res.ok) {
                 updateDocBadge([]);
-                appendMessage('bot', 'Assistant', `🧹 Uploaded document cleared.`);
+                appendMessage('bot', 'Assistant', `🧹 All uploaded documents have been cleared from memory.`);
+                setMode('NORMAL');
             }
         } catch (e) {
             console.error('Clear failed', e);
@@ -555,7 +612,10 @@
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ message: messageText })
+                body: JSON.stringify({ 
+                    message: messageText,
+                    chatMode: currentChatMode 
+                })
             });
 
             if (!response.ok) {
@@ -592,7 +652,7 @@
         if (sources && sources.length > 0) {
             const sourceDiv = document.createElement('div');
             sourceDiv.className = 'source-tag';
-            sourceDiv.innerHTML = `📚 <em>Source: ${sources.join(', ')}</em>`;
+            sourceDiv.innerHTML = `📚 <em>Source Context: ${sources.join(', ')}</em>`;
             bubbleDiv.appendChild(sourceDiv);
         }
 
