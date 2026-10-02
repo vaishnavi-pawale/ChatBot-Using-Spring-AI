@@ -436,20 +436,15 @@
         </div>
     </header>
 
-    <!-- Toolbar: Mode Selector & Upload Panel -->
+    <!-- Toolbar: Document Management -->
     <div class="mode-toolbar">
-        <div class="mode-toggle-group">
-            <button id="modeNormalBtn" class="mode-btn active" onclick="setMode('NORMAL')">
-                💬 Normal Chat
-            </button>
-            <button id="modeDocBtn" class="mode-btn" onclick="setMode('DOCUMENT')">
-                📚 Book / Document Chat
-            </button>
+        <div class="toolbar-info">
+            <span style="font-weight: 700; color: #1A567D; font-size: 0.9rem;">💬 Unified Chat & Document Assistant</span>
         </div>
 
         <div class="upload-panel">
             <label for="fileInput" class="upload-label-btn">
-                📤 Upload Book / File
+                📤 Upload Document
             </label>
             <input type="file" id="fileInput" accept=".pdf,.txt,.md,.csv,.json" onchange="uploadFile(event)" />
 
@@ -463,7 +458,7 @@
     <!-- Suggestions -->
     <div class="suggestion-container">
         <button class="chip" onclick="sendSuggestion('Tell me a short programmer joke.')">😂 Programmer Joke</button>
-        <button class="chip" onclick="sendSuggestion('What is the main topic of the uploaded document?')">📖 Summarize Book</button>
+        <button class="chip" onclick="summarizeDocumentAction()">📖 Summarize Document</button>
         <button class="chip" onclick="sendSuggestion('Explain Spring AI ChatClient in simple terms.')">💡 Explain Spring AI</button>
     </div>
 
@@ -472,14 +467,14 @@
         <div class="message bot">
             <span class="message-sender">Assistant</span>
             <div class="message-bubble">
-                Hello! 👋 You can chat with me in <strong>Normal Chat</strong> mode or upload your local documents (PDF, TXT, MD) and switch to <strong>Book / Document Chat</strong> mode to ask questions about your book!
+                Hello! 👋 I'm your AI assistant. You can chat with me normally about anything, or upload a document (PDF, TXT, etc.) using the button above and ask questions about its content anytime right here!
             </div>
         </div>
     </div>
 
     <!-- Input Area -->
     <div class="chat-input-bar">
-        <input type="text" id="userInput" class="chat-input" placeholder="Type your message here..." onkeypress="handleKeyPress(event)" />
+        <input type="text" id="userInput" class="chat-input" placeholder="Type a message or ask about your uploaded document..." onkeypress="handleKeyPress(event)" />
         <button id="sendBtn" class="send-btn" onclick="sendMessage()">
             Send ➔
         </button>
@@ -487,31 +482,15 @@
 </div>
 
 <script>
-    let currentChatMode = 'NORMAL';
     const chatMessages = document.getElementById('chatMessages');
     const userInput = document.getElementById('userInput');
     const sendBtn = document.getElementById('sendBtn');
-    const modeNormalBtn = document.getElementById('modeNormalBtn');
-    const modeDocBtn = document.getElementById('modeDocBtn');
     const docBadge = document.getElementById('docBadge');
     const docBadgeText = document.getElementById('docBadgeText');
 
     window.addEventListener('DOMContentLoaded', () => {
         checkUploadedDocs();
     });
-
-    function setMode(mode) {
-        currentChatMode = mode;
-        if (mode === 'NORMAL') {
-            modeNormalBtn.classList.add('active');
-            modeDocBtn.classList.remove('active');
-            userInput.placeholder = "Type your message for Normal Chat...";
-        } else {
-            modeDocBtn.classList.add('active');
-            modeNormalBtn.classList.remove('active');
-            userInput.placeholder = "Ask a question about your uploaded book/document...";
-        }
-    }
 
     function handleKeyPress(event) {
         if (event.key === 'Enter') {
@@ -522,6 +501,25 @@
     function sendSuggestion(text) {
         userInput.value = text;
         sendMessage();
+    }
+
+    async function summarizeDocumentAction() {
+        const typingElem = showTypingIndicator();
+        scrollToBottom();
+        try {
+            const res = await fetch('/summarize-document');
+            const data = await res.json();
+            typingElem.remove();
+            if (res.ok && data.summary) {
+                appendMessage('bot', 'Assistant', '📑 <strong>Document Summary:</strong>\n\n' + data.summary);
+            } else {
+                appendMessage('bot', 'Assistant', '⚠️ ' + (data.error || 'Please upload a document first using the button above.'));
+            }
+        } catch (err) {
+            typingElem.remove();
+            appendMessage('bot', 'Assistant', '⚠️ Error generating summary: ' + err.message);
+        }
+        scrollToBottom();
     }
 
     async function checkUploadedDocs() {
@@ -566,8 +564,7 @@
 
             if (res.ok && data.success) {
                 updateDocBadge(data.documents);
-                appendMessage('bot', 'Assistant', `✅ <strong>Document Loaded!</strong> Indexed <code>${data.fileName}</code> into ${data.totalChunks} semantic chunks. You can now switch to <strong>Book / Document Chat</strong> mode to ask questions about it!`);
-                setMode('DOCUMENT');
+                appendMessage('bot', 'Assistant', `✅ <strong>Document Loaded!</strong> Indexed <code>${data.fileName}</code> into ${data.totalChunks} semantic chunks. You can now ask questions about it directly in this chat, or continue chatting normally!`);
             } else {
                 appendMessage('bot', 'Assistant', `❌ Upload failed: ${data.error || 'Unknown error'}`);
             }
@@ -584,7 +581,6 @@
             if (res.ok) {
                 updateDocBadge([]);
                 appendMessage('bot', 'Assistant', `🧹 All uploaded documents have been cleared from memory.`);
-                setMode('NORMAL');
             }
         } catch (e) {
             console.error('Clear failed', e);
@@ -613,8 +609,7 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ 
-                    message: messageText,
-                    chatMode: currentChatMode 
+                    message: messageText
                 })
             });
 
