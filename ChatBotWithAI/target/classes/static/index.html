@@ -276,6 +276,7 @@
             line-height: 1.55;
             word-wrap: break-word;
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+            white-space: pre-wrap;
         }
 
         .message.user .message-bubble {
@@ -457,10 +458,9 @@
     <div class="chat-messages" id="chatMessages">
         <div class="message bot">
             <span class="message-sender">Assistant</span>
-            <div class="message-bubble">
-                Hello! 👋 I'm your AI assistant in <strong>Normal Mode</strong>.<br><br>
-                You can chat with me normally about anything, or upload a document using the <strong>Upload Document</strong> button above and ask questions about it anytime right here!
-            </div>
+            <div class="message-bubble">Hello! I am your AI assistant in Normal Mode.
+
+You can chat with me normally about anything, or upload a document using the Upload Document button above and ask questions about it anytime right here.</div>
         </div>
     </div>
 
@@ -634,12 +634,12 @@
 
         const bubbleDiv = document.createElement('div');
         bubbleDiv.className = 'message-bubble';
-        bubbleDiv.innerHTML = formatMarkdown(content);
+        bubbleDiv.textContent = formatPlainText(content);
 
         if (sources && sources.length > 0) {
             const sourceDiv = document.createElement('div');
             sourceDiv.className = 'source-tag';
-            sourceDiv.innerHTML = `📚 <em>Source: ${sources.join(', ')}</em>`;
+            sourceDiv.textContent = `Sources: ${sources.join(', ')}`;
             bubbleDiv.appendChild(sourceDiv);
         }
 
@@ -683,27 +683,37 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    function formatMarkdown(text) {
+    function formatPlainText(text) {
         if (!text) return '';
-        
-        let formatted = text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
+        let clean = text;
 
-        // Code blocks ```code```
-        formatted = formatted.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+        // Replace checklist brackets [ ] or [x] with standard list dash
+        clean = clean.replace(/^\s*\[[ xX]\]\s*/gm, '- ');
 
-        // Inline code `code`
-        formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // Remove markdown heading markers (# Header -> Header)
+        clean = clean.replace(/^\s*#{1,6}\s*/gm, '');
 
-        // Bold **text**
-        formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        // Remove bolding and italics: **text** -> text, *text* -> text, __text__ -> text, _text_ -> text
+        clean = clean.replace(/\*\*(.*?)\*\*/g, '$1');
+        clean = clean.replace(/\*(.*?)\*/g, '$1');
+        clean = clean.replace(/__(.*?)__/g, '$1');
+        clean = clean.replace(/(^|\W)_(.*?)_(\W|$)/g, '$1$2$3');
 
-        // Line breaks
-        formatted = formatted.replace(/\n/g, '<br>');
+        // Remove backticks and code fences
+        clean = clean.replace(/```[a-zA-Z]*\n?/g, '');
+        clean = clean.replace(/```/g, '');
+        clean = clean.replace(/`([^`]+)`/g, '$1');
 
-        return formatted;
+        // Remove divider lines made of 3 or more dashes, equals, or underscores
+        clean = clean.replace(/^\s*[-_=]{3,}\s*$/gm, '');
+
+        // Remove standalone unnecessary dashed lines or separator bars
+        clean = clean.replace(/^\s*---+\s*/gm, '');
+
+        // Clean up excessive blank lines
+        clean = clean.replace(/\n{3,}/g, '\n\n');
+
+        return clean.trim();
     }
 </script>
 </body>

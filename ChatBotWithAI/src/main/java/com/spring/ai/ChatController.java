@@ -46,10 +46,11 @@ public class ChatController {
      */
     @GetMapping("/ask")
     public String ask(@RequestParam String question) {
-        return chatClientWithAdvisor.prompt()
-                .user(question)
+        String raw = chatClientWithAdvisor.prompt()
+                .user(question + "\n\nFormatting: Output raw unformatted plain text only. Do not use Markdown, bolding, italics, hash symbols, or checklist brackets. Use standard numbering or simple dashes for lists. Do not include unnecessary dashes or divider lines.")
                 .call()
                 .content();
+        return formatToPlainText(raw);
     }
 
     /**
@@ -96,9 +97,14 @@ public class ChatController {
                         %s
                         --------------------
                         
-                        Guidelines:
+                        Instructions:
                         1. If the user's question is about topics, procedures, or instructions found in the document context above, use that information to give a clear, accurate, and detailed answer.
                         2. If the user's message is a greeting, casual chat, joke, general knowledge question, or unrelated to the document, chat naturally and answer helpfully using your general knowledge without saying "the document doesn't mention this".
+                        3. Response Formatting Rules (STRICT):
+                           - Output raw, unformatted plain text only.
+                           - Do NOT use Markdown, bolding (**), italics (* or _), hash symbols (#), backticks (`), or checklist brackets ([ ]).
+                           - Do NOT use unnecessary dashes or divider lines (such as --- or ===).
+                           - Use standard numbering (1., 2.) or simple dashes (-) for lists.
                         
                         User Message: %s
                         """.formatted(context, userMessage);
@@ -117,23 +123,71 @@ public class ChatController {
                         .distinct()
                         .collect(Collectors.toList());
 
-                response.put("reply", botReply);
+                response.put("reply", formatToPlainText(botReply));
                 response.put("sources", sources);
             } else {
                 // Normal general chat without specific document context
+                String promptGeneral = """
+                        You are a friendly, helpful AI assistant.
+                        
+                        Response Formatting Rules (STRICT):
+                        - Output raw, unformatted plain text only.
+                        - Do NOT use Markdown, bolding (**), italics (* or _), hash symbols (#), backticks (`), or checklist brackets ([ ]).
+                        - Do NOT use unnecessary dashes or divider lines (such as --- or ===).
+                        - Use standard numbering (1., 2.) or simple dashes (-) for lists.
+                        
+                        User Message: %s
+                        """.formatted(userMessage);
+
                 String botReply = generalChatClient.prompt()
-                        .user(userMessage)
+                        .user(promptGeneral)
                         .call()
                         .content();
 
-                response.put("reply", botReply);
+                response.put("reply", formatToPlainText(botReply));
             }
 
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            response.put("reply", "⚠️ Error processing request: " + e.getMessage());
+            response.put("reply", "Error processing request: " + e.getMessage());
             return ResponseEntity.ok(response);
         }
+    }
+
+    /**
+     * Sanitizes output to guarantee 100% raw plain text without Markdown, bolding,
+     * italics, hash headers, checklist brackets, or unnecessary dashes.
+     */
+    private String formatToPlainText(String text) {
+        if (text == null) return "";
+        String clean = text;
+
+        // Replace checklist brackets [ ] or [x] with standard list dash
+        clean = clean.replaceAll("(?m)^\\s*\\[[ xX]\\]\\s*", "- ");
+
+        // Remove markdown heading markers (# Header -> Header)
+        clean = clean.replaceAll("(?m)^\\s*#{1,6}\\s*", "");
+
+        // Remove bolding and italics: **text** -> text, *text* -> text, __text__ -> text, _text_ -> text
+        clean = clean.replaceAll("\\*\\*(.*?)\\*\\*", "$1");
+        clean = clean.replaceAll("\\*(.*?)\\*", "$1");
+        clean = clean.replaceAll("__(.*?)__", "$1");
+        clean = clean.replaceAll("(?<![a-zA-Z0-9])_(.*?)_(?![a-zA-Z0-9])", "$1");
+
+        // Remove backticks and code fences
+        clean = clean.replaceAll("```[a-zA-Z]*\\n?", "");
+        clean = clean.replaceAll("`([^`]+)`", "$1");
+
+        // Remove divider lines made of 3 or more dashes, equals, or underscores
+        clean = clean.replaceAll("(?m)^\\s*[-_=]{3,}\\s*$", "");
+
+        // Remove standalone unnecessary dashed lines or separator bars
+        clean = clean.replaceAll("(?m)^\\s*---+\\s*", "");
+
+        // Clean up excessive blank lines
+        clean = clean.replaceAll("\\n{3,}", "\n\n");
+
+        return clean.trim();
     }
 
     /**
