@@ -1,6 +1,3 @@
-com\spring\ai\DocumentService$DocumentSummary.class
-com\spring\ai\Controller.class
-com\spring\ai\DocumentService.class
-com\spring\ai\DocumentService$DocumentChunk.class
-com\spring\ai\Controller$ChatRequest.class
+com\spring\ai\ChatController$1.class
+com\spring\ai\ChatController$DocumentSummary.class
 com\spring\ai\RagApplication.class

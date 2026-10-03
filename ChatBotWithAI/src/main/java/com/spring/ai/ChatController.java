@@ -2,28 +2,254 @@ package com.spring.ai;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.QuestionAnswerAdvisor;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
+import org.springframework.ai.transformer.splitter.TokenTextSplitter;
+import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 @RestController
+@CrossOrigin(origins = "*")
 public class ChatController {
 
-    private final ChatClient chatClient;
+    private final ChatClient chatClientWithAdvisor;
+    private final ChatClient generalChatClient;
+    private final VectorStore vectorStore;
+    private final List<DocumentSummary> uploadedDocuments = new CopyOnWriteArrayList<>();
 
     public ChatController(ChatClient.Builder builder, VectorStore vectorStore) {
-        // Wire the in-memory store directly into the RAG advisor
-        this.chatClient = builder
+        this.vectorStore = vectorStore;
+        // Wired with default RAG advisor as required by Phase 4
+        this.chatClientWithAdvisor = builder.clone()
                 .defaultAdvisors(new QuestionAnswerAdvisor(vectorStore))
                 .build();
+        this.generalChatClient = builder.clone().build();
+
+        // Register default manual.pdf
+        this.uploadedDocuments.add(new DocumentSummary("manual.pdf", 4, 2500));
     }
 
+    /**
+     * V0 Prototype test endpoint (Phase 4 & 5)
+     */
     @GetMapping("/ask")
     public String ask(@RequestParam String question) {
-        return chatClient.prompt()
+        return chatClientWithAdvisor.prompt()
                 .user(question)
                 .call()
                 .content();
+    }
+
+    /**
+     * Unified Normal Mode Chat: handles both general conversation and document-based questions seamlessly
+     */
+    @PostMapping("/api/chat")
+    public ResponseEntity<Map<String, Object>> chat(@RequestBody Map<String, String> request) {
+        Map<String, Object> response = new HashMap<>();
+        String userMessage = request != null && request.get("message") != null
+                ? request.get("message").trim()
+                : "Hello!";
+
+        if (userMessage.isEmpty()) {
+            response.put("reply", "Please enter a message or question.");
+            return ResponseEntity.ok(response);
+        }
+
+        try {
+            // Retrieve top relevant chunks from in-memory vector store
+            List<Document> similarDocs = Collections.emptyList();
+            try {
+                similarDocs = vectorStore.similaritySearch(
+                        SearchRequest.builder().query(userMessage).topK(3).similarityThreshold(0.4).build()
+                );
+            } catch (Exception ex) {
+                try {
+                    similarDocs = vectorStore.similaritySearch(userMessage);
+                    if (similarDocs.size() > 3) {
+                        similarDocs = similarDocs.subList(0, 3);
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (similarDocs != null && !similarDocs.isEmpty()) {
+                String context = similarDocs.stream()
+                        .map(Document::getText)
+                        .collect(Collectors.joining("\n\n---\n\n"));
+
+                String promptWithContext = """
+                        You are a friendly, intelligent assistant in Normal Chat Mode.
+                        
+                        You have access to the following relevant document knowledge base:
+                        --------------------
+                        %s
+                        --------------------
+                        
+                        Guidelines:
+                        1. If the user's question is about topics, procedures, or instructions found in the document context above, use that information to give a clear, accurate, and detailed answer.
+                        2. If the user's message is a greeting, casual chat, joke, general knowledge question, or unrelated to the document, chat naturally and answer helpfully using your general knowledge without saying "the document doesn't mention this".
+                        
+                        User Message: %s
+                        """.formatted(context, userMessage);
+
+                String botReply = generalChatClient.prompt()
+                        .user(promptWithContext)
+                        .call()
+                        .content();
+
+                List<String> sources = similarDocs.stream()
+                        .map(doc -> {
+                            Object src = doc.getMetadata().get("source");
+                            if (src == null) src = doc.getMetadata().get("file_name");
+                            return src != null ? src.toString() : "Document Context";
+                        })
+                        .distinct()
+                        .collect(Collectors.toList());
+
+                response.put("reply", botReply);
+                response.put("sources", sources);
+            } else {
+                // Normal general chat without specific document context
+                String botReply = generalChatClient.prompt()
+                        .user(userMessage)
+                        .call()
+                        .content();
+
+                response.put("reply", botReply);
+            }
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            response.put("reply", "⚠️ Error processing request: " + e.getMessage());
+            return ResponseEntity.ok(response);
+        }
+    }
+
+    /**
+     * Upload document (PDF or Text) directly in Normal Mode
+     */
+    @PostMapping("/api/documents/upload")
+    public ResponseEntity<Map<String, Object>> uploadDocument(@RequestParam("file") MultipartFile file) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            if (file == null || file.isEmpty()) {
+                result.put("success", false);
+                result.put("error", "Uploaded file is empty.");
+                return ResponseEntity.badRequest().body(result);
+            }
+
+            String filename = file.getOriginalFilename() != null ? file.getOriginalFilename() : "document.txt";
+            List<Document> documents;
+
+            if (filename.toLowerCase().endsWith(".pdf")) {
+                ByteArrayResource resource = new ByteArrayResource(file.getBytes()) {
+                    @Override
+                    public String getFilename() {
+                        return filename;
+                    }
+                };
+                PagePdfDocumentReader pdfReader = new PagePdfDocumentReader(resource);
+                documents = pdfReader.get();
+            } else {
+                String text;
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+                    text = reader.lines().collect(Collectors.joining("\n"));
+                }
+                documents = List.of(new Document(text, Map.of("source", filename)));
+            }
+
+            TokenTextSplitter textSplitter = new TokenTextSplitter();
+            List<Document> chunks = textSplitter.apply(documents);
+
+            for (Document chunk : chunks) {
+                chunk.getMetadata().put("source", filename);
+            }
+
+            vectorStore.add(chunks);
+
+            int totalCharacters = documents.stream().mapToInt(d -> d.getText() != null ? d.getText().length() : 0).sum();
+            DocumentSummary summary = new DocumentSummary(filename, chunks.size(), totalCharacters);
+            uploadedDocuments.add(0, summary);
+
+            result.put("success", true);
+            result.put("fileName", filename);
+            result.put("totalChunks", chunks.size());
+            result.put("totalCharacters", totalCharacters);
+            result.put("documents", uploadedDocuments);
+
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", "Failed to process document: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(result);
+        }
+    }
+
+    @GetMapping("/api/documents")
+    public ResponseEntity<List<DocumentSummary>> getDocuments() {
+        return ResponseEntity.ok(uploadedDocuments);
+    }
+
+    @DeleteMapping("/api/documents")
+    public ResponseEntity<Map<String, Object>> clearDocuments() {
+        uploadedDocuments.clear();
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("message", "Uploaded documents cleared.");
+        return ResponseEntity.ok(res);
+    }
+
+    @GetMapping("/summarize-document")
+    public ResponseEntity<Map<String, Object>> summarizeDocument() {
+        Map<String, Object> res = new HashMap<>();
+        try {
+            if (uploadedDocuments.isEmpty()) {
+                res.put("error", "No documents uploaded yet.");
+                return ResponseEntity.badRequest().body(res);
+            }
+
+            String prompt = "Please provide a clear and well-structured summary of the user manual / uploaded document.";
+            String summary = ask(prompt);
+            res.put("summary", summary);
+            return ResponseEntity.ok(res);
+        } catch (Exception e) {
+            res.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(res);
+        }
+    }
+
+    public static class DocumentSummary {
+        private String fileName;
+        private int totalChunks;
+        private int totalCharacters;
+
+        public DocumentSummary(String fileName, int totalChunks, int totalCharacters) {
+            this.fileName = fileName;
+            this.totalChunks = totalChunks;
+            this.totalCharacters = totalCharacters;
+        }
+
+        public String getFileName() {
+            return fileName;
+        }
+
+        public int getTotalChunks() {
+            return totalChunks;
+        }
+
+        public int getTotalCharacters() {
+            return totalCharacters;
+        }
     }
 }
